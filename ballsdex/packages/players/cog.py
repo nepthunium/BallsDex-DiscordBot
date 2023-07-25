@@ -95,7 +95,7 @@ class SortingChoices(enum.Enum):
 
 class Players(commands.GroupCog, group_name=settings.players_group_cog_name):
     """
-    View and manage your countryballs collection.
+    View and manage your planetballs collection.
     """
 
     def __init__(self, bot: "BallsDexBot"):
@@ -110,14 +110,14 @@ class Players(commands.GroupCog, group_name=settings.players_group_cog_name):
         sort: SortingChoices | None = None,
     ):
         """
-        List your countryballs.
+        List your planetballs.
 
         Parameters
         ----------
         user: discord.User
             The user whose collection you want to view, if not yours.
         sort: SortingCHoices
-            Choose how countryballs are sorted. Can be used to show duplicates.
+            Choose how planetballs are sorted. Can be used to show duplicates.
         """
         user: discord.User | discord.Member = user or interaction.user
         await interaction.response.defer(thinking=True)
@@ -169,7 +169,7 @@ class Players(commands.GroupCog, group_name=settings.players_group_cog_name):
     @app_commands.checks.cooldown(1, 60, key=lambda i: i.user.id)
     async def completion(self, interaction: discord.Interaction, user: discord.User | None = None):
         """
-        Show your current completion of the BallsDex.
+        Show your current completion of the PlanetDex.
 
         Parameters
         ----------
@@ -261,12 +261,12 @@ class Players(commands.GroupCog, group_name=settings.players_group_cog_name):
     @app_commands.checks.cooldown(1, 5, key=lambda i: i.user.id)
     async def info(self, interaction: discord.Interaction, countryball: BallInstanceTransform):
         """
-        Display info from a specific countryball.
+        Display info from a specific planetball.
 
         Parameters
         ----------
         countryball: BallInstance
-            The countryball you want to inspect
+            The planetball you want to inspect
         """
         if not countryball:
             return
@@ -279,7 +279,7 @@ class Players(commands.GroupCog, group_name=settings.players_group_cog_name):
     @app_commands.checks.cooldown(1, 60, key=lambda i: i.user.id)
     async def last(self, interaction: discord.Interaction):
         """
-        Display info of your last caught countryball.
+        Display info of your last caught planetball.
         """
         await interaction.response.defer(thinking=True)
         try:
@@ -304,12 +304,12 @@ class Players(commands.GroupCog, group_name=settings.players_group_cog_name):
     @app_commands.command()
     async def favorite(self, interaction: discord.Interaction, countryball: BallInstanceTransform):
         """
-        Set favorite countryballs.
+        Set favorite planetballs.
 
         Parameters
         ----------
         countryball: BallInstance
-            The countryball you want to set/unset as favorite
+            The planetball you want to set/unset as favorite
         """
         if not countryball:
             return
@@ -356,7 +356,7 @@ class Players(commands.GroupCog, group_name=settings.players_group_cog_name):
         self, interaction: discord.Interaction, policy: app_commands.Choice[int]
     ):
         """
-        Change how you want to receive donations from /balls give
+        Change how you want to receive donations from /planets give
 
         Parameters
         ----------
@@ -392,14 +392,14 @@ class Players(commands.GroupCog, group_name=settings.players_group_cog_name):
         countryball: BallInstanceTransform,
     ):
         """
-        Give a countryball to a user.
+        Give a planetball to a user.
 
         Parameters
         ----------
         user: discord.User
-            The user you want to give a countryball to
+            The user you want to give a planetball to
         countryball: BallInstance
-            The countryball you're giving away
+            The planetball you're giving away
         """
         if not countryball:
             return
@@ -452,3 +452,32 @@ class Players(commands.GroupCog, group_name=settings.players_group_cog_name):
             f"{user.mention}!"
         )
         del self.bot.locked_balls[countryball.id]
+
+    @app_commands.command()
+    @app_commands.checks.cooldown(1, 5, key=lambda i: i.user.id)
+    async def rarity(self, interaction: discord.Interaction):
+        """
+        Show the rarity of all planetballs. (credits to dem1111 for code!!)
+        """
+        bot_countryballs = [ball for ball in balls if ball.enabled]
+        bot_countryballs.sort(key=lambda x: x.rarity)
+
+        entries = []
+        for countryball in bot_countryballs:
+            emoji = self.bot.get_emoji(countryball.emoji_id)
+            if emoji:
+                entries.append((f"**{countryball.country}**", f"{emoji} Rarity: {countryball.rarity}"))
+
+        if len(entries) == 0:
+            await interaction.response.send_message("There are no planetballs registered on this bot.", ephemeral=True)
+            return
+
+        source = FieldPageSource(entries, per_page=5, inline=False, clear_description=False)
+        source.embed.description = "Planetball Rarity"
+        source.embed.colour = discord.Colour.blurple()
+        source.embed.set_author(
+            name=interaction.user.display_name, icon_url=interaction.user.display_avatar.url
+        )
+
+        pages = Pages(source=source, interaction=interaction, compact=True)
+        await pages.start()
