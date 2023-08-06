@@ -289,6 +289,7 @@ class Admin(commands.GroupCog):
         interaction: discord.Interaction,
         ball: BallTransform | None = None,
         channel: discord.TextChannel | None = None,
+        amount: int | None = 1,
     ):
         """
         Force spawn a random or specified ball.
@@ -308,7 +309,8 @@ class Admin(commands.GroupCog):
             countryball = await CountryBall.get_random()
         else:
             countryball = CountryBall(ball)
-        await countryball.spawn(channel or interaction.channel)  # type: ignore
+        for i in range(amount):
+            await countryball.spawn(channel or interaction.channel)  # type: ignore
         await interaction.followup.send(
             f"{settings.collectible_name.title()} spawned.", ephemeral=True
         )
@@ -324,6 +326,7 @@ class Admin(commands.GroupCog):
         interaction: discord.Interaction,
         ball: BallTransform,
         user: discord.User,
+        amount: int | None = 1,
         special: SpecialTransform | None = None,
         shiny: bool | None = None,
         health_bonus: int | None = None,
@@ -355,14 +358,15 @@ class Admin(commands.GroupCog):
         await interaction.response.defer(ephemeral=True, thinking=True)
 
         player, created = await Player.get_or_create(discord_id=user.id)
-        instance = await BallInstance.create(
-            ball=ball,
-            player=player,
-            shiny=(shiny if shiny is not None else random.randint(1, 2048) == 1),
-            attack_bonus=attack_bonus or random.randint(-20, 20),
-            health_bonus=health_bonus or random.randint(-20, 20),
-            special=special,
-        )
+        for i in range(amount):
+            instance = await BallInstance.create(
+                ball=ball,
+                player=player,
+                shiny=(shiny if shiny is not None else random.randint(1, 2048) == 1),
+                attack_bonus=attack_bonus or random.randint(-20, 20),
+                health_bonus=health_bonus or random.randint(-20, 20),
+                special=special,
+            )
         await interaction.followup.send(
             f"`{ball.country}` {settings.collectible_name} was successfully given to `{user}`.\n"
             f"Special: `{special.name if special else None}` • ATK:`{instance.attack_bonus:+d}` • "
