@@ -71,6 +71,8 @@ class Settings:
     root_role_ids: list[int] = field(default_factory=list)
     admin_role_ids: list[int] = field(default_factory=list)
 
+    log_channel: int | None = None
+
     team_owners: bool = False
     co_owners: list[int] = field(default_factory=list)
 
@@ -107,6 +109,8 @@ def read_settings(path: "Path"):
     settings.root_role_ids = content["admin-command"]["root-role-ids"] or []
     settings.admin_role_ids = content["admin-command"]["admin-role-ids"] or []
 
+    settings.log_channel = content.get("log-channel", None)
+
     settings.prometheus_enabled = content["prometheus"]["enabled"]
     settings.prometheus_host = content["prometheus"]["host"]
     settings.prometheus_port = content["prometheus"]["port"]
@@ -115,7 +119,8 @@ def read_settings(path: "Path"):
 
 def write_default_settings(path: "Path"):
     path.write_text(
-        """
+        """# yaml-language-server: $schema=json-config-ref.json
+
 # paste the bot token after regenerating it here
 discord-token: 
 
@@ -168,6 +173,9 @@ admin-command:
   # list of role IDs having partial access to /admin
   admin-role-ids:
 
+# log channel for moderation actions
+log-channel:
+
 # manage bot ownership
 owners:
   # if enabled and the application is under a team, all team members will be considered as owners
@@ -189,6 +197,7 @@ def update_settings(path: "Path"):
     content = path.read_text()
 
     add_owners = True
+    add_config_ref = "# yaml-language-server: $schema=json-config-ref.json" not in content
 
     for line in content.splitlines():
         if line.startswith("owners:"):
@@ -204,6 +213,12 @@ owners:
   # a list of IDs that must be considered owners in addition to the application/team owner
   co-owners:
 """
+    if add_config_ref:
+        if "# yaml-language-server: $schema=config-ref.json" in content:
+            # old file name replacement
+            content = content.replace("$schema=config-ref.json", "$schema=json-config-ref.json")
+        else:
+            content = "# yaml-language-server: $schema=json-config-ref.json\n" + content
 
-    if any((add_owners,)):
+    if any((add_owners, add_config_ref)):
         path.write_text(content)

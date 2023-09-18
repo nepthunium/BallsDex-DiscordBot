@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import types
+import inspect
 from typing import cast
 
 import aiohttp
@@ -12,20 +14,65 @@ from cachetools import TTLCache
 from discord import app_commands
 from discord.ext import commands
 from rich import print
+from prometheus_client import Histogram
 
 from ballsdex.core.dev import Dev
 from ballsdex.core.metrics import PrometheusServer
-from ballsdex.core.models import BlacklistedGuild, BlacklistedID, Special, Ball, balls, specials
+from ballsdex.core.models import (
+    BlacklistedGuild,
+    BlacklistedID,
+    Special,
+    Ball,
+    Regime,
+    Economy,
+    balls,
+    regimes,
+    economies,
+    specials,
+)
 from ballsdex.core.commands import Core
 from ballsdex.settings import settings
 
 log = logging.getLogger("ballsdex.core.bot")
+http_counter = Histogram("discord_http_requests", "HTTP requests", ["key", "code"])
 
 PACKAGES = ["config", "players", "countryballs", "info", "admin", "trade"]
 
 
 def owner_check(ctx: commands.Context[BallsDexBot]):
     return ctx.bot.is_owner(ctx.author)
+
+
+# observing the duration and status code of HTTP requests through aiohttp TraceConfig
+async def on_request_start(
+    session: aiohttp.ClientSession,
+    trace_ctx: types.SimpleNamespace,
+    params: aiohttp.TraceRequestStartParams,
+):
+    # register t1 before sending request
+    trace_ctx.start = session.loop.time()
+
+
+async def on_request_end(
+    session: aiohttp.ClientSession,
+    trace_ctx: types.SimpleNamespace,
+    params: aiohttp.TraceRequestEndParams,
+):
+    time = session.loop.time() - trace_ctx.start
+
+    # to categorize HTTP calls per path, we need to access the corresponding discord.http.Route
+    # object, which is not available in the context of an aiohttp TraceConfig, therefore it's
+    # obtained by accessing the locals() from the calling function HTTPConfig.request
+    # "params.url.path" is not usable as it contains raw IDs and tokens, breaking categories
+    frame = inspect.currentframe()
+    _locals = frame.f_back.f_back.f_back.f_back.f_back.f_locals
+    if route := _locals.get("route"):
+        route_key = route.key
+    else:
+        # calling function is HTTPConfig.static_login which has no Route object
+        route_key = f"{params.response.method} {params.url.path}"
+
+    http_counter.labels(route_key, params.response.status).observe(time)
 
 
 class CommandTree(app_commands.CommandTree):
@@ -57,6 +104,12 @@ class BallsDexBot(commands.AutoShardedBot):
             guilds=True, guild_messages=True, emojis_and_stickers=True, message_content=True
         )
 
+        if settings.prometheus_enabled:
+            trace = aiohttp.TraceConfig()
+            trace.on_request_start.append(on_request_start)
+            trace.on_request_end.append(on_request_end)
+            options["http_trace"] = trace
+
         super().__init__(command_prefix, intents=intents, tree_cls=CommandTree, **options)
 
         self.dev = dev
@@ -68,6 +121,8 @@ class BallsDexBot(commands.AutoShardedBot):
         self._shutdown = 0
         self.blacklist: set[int] = set()
         self.blacklist_guild: set[int] = set()
+        self.catch_log: set[int] = set()
+        self.command_log: set[int] = set()
         self.locked_balls = TTLCache(maxsize=99999, ttl=60 * 30)
 
     async def start_prometheus_server(self):
@@ -105,6 +160,16 @@ class BallsDexBot(commands.AutoShardedBot):
         for ball in await Ball.all():
             balls[ball.pk] = ball
         log.info(f"Loaded {len(balls)} balls")
+
+        regimes.clear()
+        for regime in await Regime.all():
+            regimes[regime.pk] = regime
+        log.info(f"Loaded {len(regimes)} regimes")
+
+        economies.clear()
+        for economy in await Economy.all():
+            economies[economy.pk] = economy
+        log.info(f"Loaded {len(economies)} economies")
 
         specials.clear()
         for special in await Special.all():
@@ -219,23 +284,30 @@ class BallsDexBot(commands.AutoShardedBot):
 
     async def blacklist_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id in self.blacklist:
-            await interaction.response.send_message(
-                "You are blacklisted from the bot."
-                "\nYou can appeal this blacklist in our support server: {}".format(
-                    settings.discord_invite
-                ),
-                ephemeral=True,
-            )
+            if interaction.type != discord.InteractionType.autocomplete:
+                await interaction.response.send_message(
+                    "You are blacklisted from the bot."
+                    "\nYou can appeal this blacklist in our support server: {}".format(
+                        settings.discord_invite
+                    ),
+                    ephemeral=True,
+                )
             return False
         if interaction.guild_id and interaction.guild_id in self.blacklist_guild:
-            await interaction.response.send_message(
-                "This server is blacklisted from the bot."
-                "\nYou can appeal this blacklist in our support server: {}".format(
-                    settings.discord_invite
-                ),
-                ephemeral=True,
-            )
+            if interaction.type != discord.InteractionType.autocomplete:
+                await interaction.response.send_message(
+                    "This server is blacklisted from the bot."
+                    "\nYou can appeal this blacklist in our support server: {}".format(
+                        settings.discord_invite
+                    ),
+                    ephemeral=True,
+                )
             return False
+        if interaction.command and interaction.user.id in self.command_log:
+            log.info(
+                f'{interaction.user} ({interaction.user.id}) used "{interaction.command.name}" in '
+                f"{interaction.guild} ({interaction.guild_id})"
+            )
         return True
 
     async def on_command_error(
